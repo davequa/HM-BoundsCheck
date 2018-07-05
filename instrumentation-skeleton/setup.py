@@ -223,13 +223,13 @@ if __name__ == '__main__':
     setup.add_instance(infra.instances.ClangLTO(instance.llvm))
     setup.add_instance(instance)
 
-#    newinstance = DHash('3.8.0')
+    newinstance = DHash('3.8.0')
 #    setup.add_instance(infra.instances.ClangLTO(newinstance.llvm))
-#    setup.add_instance(newinstance)
+    setup.add_instance(newinstance)
 
-#    newnewinstance = HMBoundsCheck('3.8.0')
+    newnewinstance = HMBoundsCheck('3.8.0')
 #    setup.add_instance(infra.instances.ClangLTO(newnewinstance.llvm))
-#    setup.add_instance(newnewinstance)
+    setup.add_instance(newnewinstance)
 
     setup.add_target(HelloWorld())
  #  setup.add_target(infra.targets.SPEC2006(
