@@ -1,4 +1,4 @@
-#include "dhash.h"
+#include <noinstrument.h>
 #include <dlfcn.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -12,35 +12,62 @@
 
 #define AMOUNT_OF_LOCKS 2
 
-//test for how many locks are useful. Write about in paper when found, and say that we did research into which
-//amount is optimal for naive locking.
-int busyCounter = 0;
+#define HASHSZ 4096
+
+#define checkMemoryAccess NOINSTRUMENT(checkMemoryAccess)
+#define Dlib_free NOINSTRUMENT(Dlib_free)
+#define Dlib_malloc NOINSTRUMENT(Dlib_malloc)
+#define Dlib_realloc NOINSTRUMENT(Dlib_realloc)
+#define Dlib_calloc NOINSTRUMENT(Dlib_calloc)
+#define Dlib_memalign NOINSTRUMENT(Dlib_memalign)
+
+#define checkRegistration NOINSTRUMENT(checkRegistration)
+
+//#define calcRZSize NOINSTRUMENT(calcRZSize)
+
+//#define unloadLib NOINSTRUMENT(unloadLib)
+#define initLib NOINSTRUMENT(initLib)
+
+#define getRZAddrBucket NOINSTRUMENT(getRZAddrBucket)
+#define removeAddrFromList NOINSTRUMENT(removeAddrFromList)
+#define removeAddr NOINSTRUMENT(removeAddr)
+
+#define addAddrToList NOINSTRUMENT(addAddrToList)
+#define registerAddr NOINSTRUMENT(registerAddr)
+
+#define insertRZPattern NOINSTRUMENT(insertRZPattern)
+
+typedef struct rzAddr{
+	void *startAddrL;
+	void*startAddrR;
+	struct rzAddr *next;
+}rzAddr;
+
+typedef struct rzHashBucket{
+	unsigned int counter;
+	rzAddr *first;
+	rzAddr *last;
+}rzHashBucket;
 
 //Originally used for the size of the shadow memory. A left-over from the ASAN implementation, but now used to calculate
 //the red-zone size dynamically. For scale value N, the red-zone size will be 2 ^ N (e.g., N = 3, 2 ^ 3 = 8 bytes).
 //The minimum size of this scale value is 3, where the red-zone is 8 bytes. There is, in theory, no maximum size,
 //but the largest (recommended) size is 10 (for a red-zone size of 1024 bytes).
-size_t scale = 7;
+size_t scale = 5;
 
 //New redzone pattern, simply an unsigned character with a size 8 bits. The maximum value (0xFF) was chosen
 //for this, but can be changed to anything (as long as it is 8 bits/1 byte long).
-unsigned char redzone = 0xFF;
-
-//Exponent for the address hashing pre-calculated to avoid having to do the calculation all the time.
-unsigned long int exponent = 0;
+unsigned char redzone = 0x2A;
 
 //Size of the red-zone, determined by the scale variable.
-static size_t rz_sz = 0;
+static size_t rz_sz = 32;
 
 rzHashBucket hashTable[HASHSZ];
 
-static int init = 0;
+static const int hashexp = 12;
 
 //Used to create a mapping from virtual memory addresses to the hash table buckets.
 static unsigned long int pagesz = 0;
-
-//An array of mutexes, created to ensure thread safety when performing operations on the hash table and its buckets.
-pthread_mutex_t mutexes[AMOUNT_OF_LOCKS];
 
 /*----------------Environment Variables----------------*/
 
@@ -50,12 +77,16 @@ pthread_mutex_t mutexes[AMOUNT_OF_LOCKS];
 //Variable for activating red-zone poison pattern checking. Deactivating this option will also disable all
 //red-zone pattern insertion, meaning red-zones will no longer be explicitly poisoned. Only the 'slow' check will be used here,
 //resulting in a performance decrease, but an increase in memory efficiency (since the red-zones will no longer be intialised).
-static int fastCheckInit = 0;
+static const int fastCheckInit = 0;
 
 //Variable for enabling hash table registration. If disabled, registration will be turned off, and only the explicit poisoning of
 //the red-zones will be used for the detection of memory errors. This will increase the amount of false-positives experienced,
 //but will probably increase performance as well. 
-static int useRegistration = 0;
+static const int useRegistration = 0;
+
+//This debug variable can be turned on to display error messages, or informative notes to show the user what things are going wrong.
+//When turned off, runtime is significantly lower.
+static const int debug = 1;
 
 //OPTIONS:
 //Both enabled (a fast check, using a hash table for the slow check).
@@ -69,7 +100,7 @@ static int useRegistration = 0;
 size_t calcRZSize(size_t scale){
 	/* The minimum size currently is 32 bytes, where scale N = 5, and the standard size is 128 bytes,
 	   with scale N = 7. */
-	if(scale == 0){
+	if(debug == 0 && scale == 0){
 		return 0;
 	}
 
@@ -82,15 +113,10 @@ size_t calcRZSize(size_t scale){
 int unloadLib(){
 	/* Function to destroy the mutexes, and to ensure the library cannot function properly any more. This is only necessary
 	   on dynamic library unloads (probably). */
-	for(int i = 0; i < AMOUNT_OF_LOCKS; i++){
-		pthread_mutex_destroy(&mutexes[i]);
-	}
-
-	init = 0;
-
 	return 0;
 }
 
+__attribute__((constructor))
 int initLib(){
 	/* Function to set up some necessary variables/values. Called upon the use of any (callable) function. */
 	if(useRegistration == 0){
@@ -100,114 +126,14 @@ int initLib(){
 		}
 	}
 
-	rz_sz = calcRZSize(scale);
-	if(rz_sz == 0){
-		printf("ERROR: FAILED TO ACQUIRE RED-ZONE SIZE, SIZE WAS 0.\n");
-		return 1;
-	}
-	
-	exponent = log(pagesz) / log(2);
-
-	for(int i = 0; i < AMOUNT_OF_LOCKS; i++){
-		if(pthread_mutex_init(&mutexes[i], NULL) != 0){
-			printf("ERROR: FAILED TO INITIALISE MUTEXES.\n");
-			return 1;
-		}
-	}
-
-	init = 1;
-
 	return 0;
 }
 
-int getLock(int bucket){
-	if(bucket < 2048){
-		return 0;
-	}else if(bucket >= 2048 && bucket < 4096){
-		return 1;
-	}
-
-	return -1;
-}
-
-int unlock(void *mem){
-	if(mem == NULL){
-		printf("ERROR: ADDRESS GIVEN TO FUNCTION 'unlock' WAS NOT VALID.\n");
-		return 1;
-	}
-
-	int bucket;
-	bucket = getRZAddrBucket(mem);
-
-	int lock;
-	lock = -1;
-
-	int ifLocked;
-	ifLocked = 0;
-
-	if(bucket >= 0 && bucket < HASHSZ){
-		lock = getLock(bucket);
-		if(lock == -1){
-			printf("ERROR: MUTEX DOES NOT EXIST.\n");
-			return 1;
-		}
-
-		ifLocked = pthread_mutex_unlock(&mutexes[lock]);
-		if(ifLocked == EINVAL || ifLocked == EPERM){
-			printf("ERROR: MUTEX TO BE UNLOCKED WAS NOT IN POSSESSION OF THREAD ATTEMPTING TO UNLOCK.\n");
-			return 1;
-		}
-
-		return 0;
-	}
-
-	return 1;
-}
-
-int lock(void *mem){
-	if(mem == NULL){
-		printf("ERROR: ADDRESS GIVEN TO FUNCTION 'lock' WAS NOT VALID.\n");
-		return 1;
-	}
-
-	int bucket;
-	bucket = getRZAddrBucket(mem);
-
-	int lock;
-	lock = -1;
-
-	int ifLocked;
-	ifLocked = -1;
-
-	if(bucket >= 0 && bucket < HASHSZ){
-		lock = getLock(bucket);
-		if(lock == -1){
-			printf("ERROR: LOCK DOES NOT EXIST.\n");
-			return 1;
-		}
-
-		do{
-			 ifLocked = pthread_mutex_trylock(&mutexes[lock]);
-
-			 if(ifLocked == EINVAL){
-			 	return 1;
-			 }else if(ifLocked == EBUSY){
-			 	busyCounter++;
-			 }
-		}while(ifLocked == EBUSY);
-
-		/* Locked successfully. */
-		return 0;
-	}
-
-	printf("ERROR: UNABLE TO LOCK MUTEX.\n");
-	return 1;
-}
 
 int getRZAddrBucket(void *mem){
 	/* Get most significant n bits from the address. */
 	unsigned long int pageNum;
-	pageNum = ((unsigned long int) mem >> exponent);
+	pageNum = ((unsigned long int) mem >> hashexp);
 
 	int bucket;
 	bucket = (((pageNum) ^ ((pageNum) >> 8) ^ ((pageNum) >> 16) ^ ((pageNum) >> 24)) & (HASHSZ -1));
@@ -258,18 +184,11 @@ int checkRegistration(void *mem, int accessSize){
 	return 0;
 }
 /*--------------------------------*/
-
+__attribute__((always_inline, used))
 int checkMemoryAccess(void *mem, int accessSize){
 	/* Returns a negative integer if the address was invalid, 0 if there was no match, and a positive integer
     if the patterns are equal. */
-	if(init == 0){
-		if(initLib() == 1){
-			printf("ERROR: INITIALISATION OF LIBRARY FAILED.\n");
-			return -1;
-		}
-	}
-
-	if(mem == NULL){
+	if(debug == 0 && mem == NULL){
 		return -1;
 	}
 
@@ -288,10 +207,10 @@ int checkMemoryAccess(void *mem, int accessSize){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
-					if(check == 1){
+					if(debug == 0 && check == 1){
 						/* A red-zone was indeed accessed. */
 						return 1;
-					}else if(check == -1){
+					}else if(debug == 0 && check == -1){
 						/* Something went wrong with the shadow memory. Probably exit the program? */
 						printf("ERROR: SOMETHING WENT WRONG.\n");
 						return -1;
@@ -305,10 +224,10 @@ int checkMemoryAccess(void *mem, int accessSize){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
-					if(check == 1){
+					if(debug == 0 && check == 1){
 						/* A red-zone was indeed accessed. */
 						return 1;
-					}else if(check == -1){
+					}else if(debug == 0 && check == -1){
 						/* Something went wrong with the shadow memory. Probably exit the program? */
 						printf("ERROR: SOMETHING WENT WRONG.\n");
 						return -1;
@@ -320,10 +239,10 @@ int checkMemoryAccess(void *mem, int accessSize){
 			}
 		}else{
 			check = checkRegistration(mem, accessSize);
-			if(check == 1){
+			if(debug == 0 && check == 1){
 				/* A red-zone was indeed accessed. */
 				return 1;
-			}else if(check == -1){
+			}else if(debug == 0 && check == -1){
 				/* Something went wrong with the shadow memory. Probaby exit the program? */
 				printf("ERROR: SOMETHING WENT WRONG.\n");
 				return -1;
@@ -440,7 +359,7 @@ int removeAddr(void *memL, void *memR){
 	int secondAddrLock;
 	secondAddrLock = 0;
 
-	if(memL == NULL){
+	if(debug == 0 && memL == NULL){
 		/* We always require the left red-zone address to perform a remove. The address of the right red-zone is
 		   optional. */
 		printf("ERROR: INVALID STARTING ADDRESS PROVIDED.\n");
@@ -461,12 +380,12 @@ int removeAddr(void *memL, void *memR){
 	}
 	
 	/* The very first bucket is 0, the very last bucket is 255. */
-	if(!(lrzBucket >= 0 && lrzBucket < HASHSZ)){
+	if(debug == 0 && (!(lrzBucket >= 0 && lrzBucket < HASHSZ))){
 		return 1;
 	}
 
 	if(memRUnknown != 0){
-		if(!(rrzBucket >= 0 && rrzBucket < HASHSZ)){
+		if(debug == 0 && (!(rrzBucket >= 0 && rrzBucket < HASHSZ))){
 			return 1;
 		}
 	}
@@ -476,24 +395,18 @@ int removeAddr(void *memL, void *memR){
 	toRemove.startAddrL = memL;
 	toRemove.startAddrR = memR;
 
-	if(lock(memL) == 1){
-		return 1;
-	}
-
 	if(memRUnknown == 0){
 		current = removeAddrFromList(&toRemove, lrzBucket);
-		if(current == NULL){
-			unlock(memL);
+		if(debug == 0 && current == NULL){
 			return 1;
 		}
 
 		/* Recover the right red-zone address from the left red-zone entry (from the known bucket), and
 		   use it to now find the other entry in the different bucket (if a cross-page allocation occurred). */
-		if(current->startAddrR == NULL){
+		if(debug == 0 && current->startAddrR == NULL){
 			/* The memory was recorded as only having a left red-zone. Therefore, we perform no additional steps.
 			   This, technically, is possible, but should not happen. We error, but do not exit, since it
 			   is not a fatal error. */
-			unlock(memL);
 
 			printf("ERROR: NO RIGHT RED-ZONE RECORDED.\n");
 			free(current);
@@ -504,10 +417,9 @@ int removeAddr(void *memL, void *memR){
 		
 		rrzBucket = getRZAddrBucket(toRemove.startAddrR);
 
-		if(!(rrzBucket >= 0 && rrzBucket < HASHSZ)){
+		if(debug == 0 && (!(rrzBucket >= 0 && rrzBucket < HASHSZ))){
 			free(current);
 
-			unlock(memL);
 			return 1;
 		}
 
@@ -515,40 +427,11 @@ int removeAddr(void *memL, void *memR){
 		   entry must be removed from that specific bucket as well. If they are equal, the entry can simply be deallocated,
 		   meaning that the removal was successful. */
 		if(rrzBucket != lrzBucket){
-			firstAddrLock = getLock(lrzBucket);
-			secondAddrLock = getLock(rrzBucket);
-
-			if(firstAddrLock != secondAddrLock){
-				unlock(memL);
-
-				if(lock(toRemove.startAddrR) == 1){
-					free(current);
-					return 1;
-				}
-			}
-
 			crossCurrent = removeAddrFromList(&toRemove, rrzBucket);
-			if(crossCurrent == NULL){
+			if(debug == 0 && crossCurrent == NULL){
 				free(current);
 
-				if(firstAddrLock != secondAddrLock){
-					unlock(toRemove.startAddrR);
-				}else{
-					unlock(memL);
-				}
-
 				return 1;
-			}
-
-			if(firstAddrLock != secondAddrLock){
-				if(unlock(toRemove.startAddrR) == 1){
-					free(current);
-					free(crossCurrent);
-
-					return 1;
-				}
-			}else{
-				unlock(memL);
 			}
 
 			/* Free the cross-allocated entry which originates from a different bucket. */
@@ -556,42 +439,15 @@ int removeAddr(void *memL, void *memR){
 		}
 	}else if(standardCrossAlloc == 0){
 		current = removeAddrFromList(&toRemove, lrzBucket);
-		if(current == NULL){
-			unlock(memL);
+		if(debug == 0 && current == NULL){
 			return 1;
-		}
-
-		firstAddrLock = getLock(lrzBucket);
-		secondAddrLock = getLock(rrzBucket);
-
-		if(firstAddrLock != secondAddrLock){
-			unlock(memL);
-
-			if(lock(memR) == 1){
-				free(current);
-				return 1;
-			}
 		}
 
 		crossCurrent = removeAddrFromList(&toRemove, rrzBucket);
-		if(crossCurrent == NULL){
+		if(debug == 0 && crossCurrent == NULL){
 			free(current);
 
-			if(firstAddrLock != secondAddrLock){
-				unlock(memL);
-			}
 			return 1;
-		}
-
-		if(firstAddrLock != secondAddrLock){
-			if(unlock(memR) == 1){
-				free(current);
-				free(crossCurrent);
-
-				return 1;
-			}
-		}else{
-			unlock(memL);
 		}
 
 		/* Free the cross-allocated entry which originates from a different bucket. */
@@ -600,14 +456,9 @@ int removeAddr(void *memL, void *memR){
 		/* This branch is used if and only if the left and right red-zone buckets match, meaning only the
 		   left bucket can be used for removing the entry (since the list referred to by both buckets is the same). */
 		current = removeAddrFromList(&toRemove, lrzBucket);
-		if(current == NULL){
-			unlock(memL);
+		if(debug == 0 && current == NULL){
 			return 1;
 		}
-	}
-
-	if(unlock(memL) == 1){
-		return 1;
 	}
 
 	/* Free the removed entry from the hash table list. */
@@ -682,19 +533,13 @@ int registerAddr(void *memL, void *memR){
 	int rrzBucket;
 	rrzBucket = -1;
 
-	int firstAddrLock;
-	firstAddrLock = 0;
-
-	int secondAddrLock;
-	secondAddrLock = 0;
-
 	int crossAlloc;
 	crossAlloc = -1;
 
 	int check;
 	check = -1;
 
-	if(memL == NULL || memR == NULL){
+	if(debug == 0 && (memL == NULL || memR == NULL)){
 		/* Requires two valid red-zone addresses for a register. */
 		return 1;
 	}
@@ -709,11 +554,11 @@ int registerAddr(void *memL, void *memR){
 	}
 	
 	/* The very first bucket is 0, the very last bucket is 255. Check if the selected bucket(s) are valid. */
-	if(!(lrzBucket >= 0 && lrzBucket < HASHSZ)){
+	if(debug == 0 && (!(lrzBucket >= 0 && lrzBucket < HASHSZ))){
 		return 1;
 	}
 
-	if(!(rrzBucket >= 0 && rrzBucket < HASHSZ)){
+	if(debug == 0 && (!(rrzBucket >= 0 && rrzBucket < HASHSZ))){
 		return 1;
 	}
 
@@ -726,21 +571,17 @@ int registerAddr(void *memL, void *memR){
 	toAdd->startAddrR = memR;
 	toAdd->next = NULL;
 
-	if(lock(memL) == 1){
-		free(toAdd);
-		return 1;
-	}
-
 	if(crossAlloc == 0){
-		if(addAddrToList(toAdd, lrzBucket) == 1){
+		check = addAddrToList(toAdd, lrzBucket);
+		if(debug == 0 && (check == 1 || check == -1)){
 			free(toAdd);
-			unlock(memL);
 			return 1;
 		}
 
+		check = -1;
+
 		crossToAdd = (rzAddr*) malloc(sizeof(struct rzAddr));
-		if(crossToAdd == NULL){
-			unlock(memL);
+		if(debug == 0 && crossToAdd == NULL){
 			return 1;
 		}
 
@@ -748,30 +589,10 @@ int registerAddr(void *memL, void *memR){
 		crossToAdd->startAddrR = memR;
 		crossToAdd->next = NULL;
 
-		firstAddrLock = getLock(lrzBucket);
-		secondAddrLock = getLock(rrzBucket);
-
-		if(firstAddrLock != secondAddrLock){
-			if(unlock(memL) == 1){
-				free(crossToAdd);
-				return 1;
-			}
-
-			if(lock(memR) == 1){
-				free(crossToAdd);
-				return 1;
-			}
-		}
-
-		if(addAddrToList(crossToAdd, rrzBucket) == 1){
+		check = addAddrToList(crossToAdd, rrzBucket);		
+		if(debug == 0 && (check == 1 || check == -1)){
 			/* If this occurs, everything will break. */
 			free(crossToAdd);
-
-			if(firstAddrLock != secondAddrLock){
-				unlock(memR);
-			}else{
-				unlock(memL);
-			}
 			
 			if(removeAddr(memL, memR) == 1){
 				/* Fatal memory error. */
@@ -779,26 +600,11 @@ int registerAddr(void *memL, void *memR){
 
 			return 1;
 		}
-
-		if(firstAddrLock != secondAddrLock){
-			if(unlock(memR) == 1){
-				return 1;
-			}
-		}else{
-			if(unlock(memL) == 1){
-				return 1;
-			}
-		}
-		
 	}else{
-		if(addAddrToList(toAdd, lrzBucket) == 1){
+		check = addAddrToList(toAdd, lrzBucket);
+		if(debug == 0 && (check == 1 || check == -1)){
 			free(toAdd);
-			unlock(memL);
 
-			return 1;
-		}
-
-		if(unlock(memL) == 1){
 			return 1;
 		}
 
@@ -808,13 +614,6 @@ int registerAddr(void *memL, void *memR){
 }
 
 int insertRZPattern(void *mem, size_t size){
-	if(init == 0){
-		if(initLib() == 1){
-			printf("ERROR: INITIALISATION OF LIBRARY FAILED.\n");
-			return 1;
-		}
-	}
-
 	/* Use a custom size for global, stack, or static objects (specified, customisable). If the size
 	   is either 0 (standard whenever not using a custom size) or not a multiple of 8, also use
 	   the standard size (red-zone size, defined by scale). */
@@ -833,14 +632,8 @@ int insertRZPattern(void *mem, size_t size){
 }
 
 /* This function assumes alignment is in order when freeing memory. */
+__attribute__((used))
 void Dlib_free(void *mem){
-	if(init == 0){
-		if(initLib() == 1){
-			printf("ERROR: INITIALISATION OF LIBRARY FAILED.\n");
-			return;
-		}
-	}
-
 	if(!mem){
 		return;
 	}
@@ -862,14 +655,8 @@ void Dlib_free(void *mem){
 	return;
 }
 
+__attribute__((used))
 void *Dlib_malloc(size_t sz){
-	if(init == 0){
-		if(initLib() == 1){
-			printf("ERROR: INITIALISATION OF LIBRARY FAILED.\n");
-			return NULL;
-		}
-	}
-
 	/* Defined behaviour, just return NULL on a 0-byte allocation. It can also return a (valid) pointer to
 	   memory with 0 bytes (which is impossible to dereference), but this placeholder is fine for now. */
 	if(sz <= 0){
@@ -883,7 +670,7 @@ void *Dlib_malloc(size_t sz){
 	mem = NULL;
 
 	mem = malloc(ac_sz);
-	if(mem == NULL){
+	if(debug == 0 && mem == NULL){
 		return NULL;
 	}
 
@@ -915,15 +702,9 @@ void *Dlib_malloc(size_t sz){
 	return mem;
 }
 
+__attribute__((used))
 void *Dlib_realloc(void *mem, size_t nsz){
-	if(init == 0){
-		if(initLib() == 1){
-			printf("ERROR: INITIALISATION OF LIBRARY FAILED.\n");
-			return NULL;
-		}
-	}
-
-	if(mem == NULL && nsz <= 0){
+	if(debug == 0 && mem == NULL && nsz <= 0){
 		/* Naturally undefined behaviour, so solve by returning NULL for now. */
 		return NULL;
 	}
@@ -985,14 +766,8 @@ void *Dlib_realloc(void *mem, size_t nsz){
 	return newmem;
 }
 
+__attribute__((used))
 void *Dlib_calloc(size_t num, size_t sz){
-	if(init == 0){
-		if(initLib() == 1){
-			printf("ERROR: INITIALISATION OF LIBRARY FAILED.\n");
-			return NULL;
-		}
-	}
-
 	if(sz <= 0){
 		return NULL;
 	}
@@ -1004,7 +779,7 @@ void *Dlib_calloc(size_t num, size_t sz){
 	mem = NULL;
 
 	mem = Dlib_malloc(size);
-	if(mem == NULL){
+	if(debug == 0 && mem == NULL){
 		return NULL;
 	}
 
@@ -1017,6 +792,7 @@ void *Dlib_calloc(size_t num, size_t sz){
 	return mem;
 }
 
+__attribute__((used))
 void *Dlib_memalign(size_t alignment, size_t sz){
 	void *mem;
 	mem = NULL;
