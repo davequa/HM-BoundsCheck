@@ -85,7 +85,7 @@ typedef struct freeList{
 //size_t global_offset = 0;
 
 //Essential global values for the management of the shadow memory.
-void *shadowMemStart = NULL;
+static void *shadowMemStart = NULL;
 
 //Originally used for the size of the shadow memory. A left-over from the ASAN implementation, but now used to calculate
 //the red-zone size dynamically. For scale value N, the red-zone size will be 2 ^ N (e.g., N = 3, 2 ^ 3 = 8 bytes).
