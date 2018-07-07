@@ -63,7 +63,7 @@ unsigned char redzone = 0x2A;
 //Size of the red-zone, determined by the scale variable.
 static size_t rz_sz = 32;
 
-rzHashBucket hashTable[HASHSZ];
+static rzHashBucket hashTable[HASHSZ];
 
 static const int hashexp = 12;
 
