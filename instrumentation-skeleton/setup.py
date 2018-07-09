@@ -119,12 +119,12 @@ class DHashRuntime(infra.Package):
         return True
 
     def is_built(self, ctx):
-     #   return False
-        return os.path.exists('libdhash.a')
+        return False
+     #   return os.path.exists('libdhash.a')
 
     def is_installed(self, ctx):
-     #   return False
-        return self.is_built(ctx)
+        return False
+     #   return self.is_built(ctx)
 
     def configure(self, ctx):
         ctx.ldflags += ['-L' + self.path(ctx), '-lm', '-lpthread', '-Wl,-whole-archive', '-ldhash', '-Wl,-no-whole-archive']
@@ -181,12 +181,12 @@ class HMBoundsCheckRuntime(infra.Package):
         return True
 
     def is_built(self, ctx):
-     #   return False
-        return os.path.exists('libhmboundscheck.a')
+        return False
+     #   return os.path.exists('libhmboundscheck.a')
 
     def is_installed(self, ctx):
-      #  return False
-        return self.is_built(ctx)
+        return False
+      #  return self.is_built(ctx)
 
     def configure(self, ctx):
         ctx.ldflags += ['-L' + self.path(ctx), '-lm', '-lpthread', '-Wl,-whole-archive', '-lhmboundscheck', '-Wl,-no-whole-archive']
