@@ -63,7 +63,7 @@ unsigned char redzone = 0x2A;
 //Size of the red-zone, determined by the scale variable.
 static size_t rz_sz = 32;
 
-static rzHashBucket hashTable[HASHSZ];
+rzHashBucket hashTable[HASHSZ];
 
 static const int hashexp = 12;
 
@@ -124,6 +124,20 @@ int initLib(){
 		pagesz = sysconf(_SC_PAGESIZE);
 		if(pagesz == 0){
 			return 1;
+		}
+	}
+
+	if(debug == 0){
+		if(fastCheckInit == 0){
+			printf("Fast Check: ACTIVATED\n");		
+		}else{
+			printf("Fast Check: DEACTIVATED\n");
+		}
+
+		if(useRegistration == 0){
+			printf("Memory Registration: ACTIVATED\n");
+		}else{
+			printf("Memory Registration: DEACTIVATED\n");
 		}
 	}
 
@@ -204,11 +218,11 @@ int checkMemoryAccess(void *mem, int accessSize){
 				void *accessMem;
 				accessMem = mem + (size_t) (accessSize - 1);
 
-				if((memcmp(mem, &redzone, sizeof(redzone)) != 0) && memcmp(accessMem, &redzone, sizeof(redzone)) != 0){
+				if((memcmp(mem, &redzone, 1) != 0) && memcmp(accessMem, &redzone, 1) != 0){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
-					if(debug == 0 && check == 1){
+					if(check == 1){
 						/* A red-zone was indeed accessed. */
 						return 1;
 					}else if(debug == 0 && check == -1){
@@ -221,11 +235,11 @@ int checkMemoryAccess(void *mem, int accessSize){
 					}
 				}
 			}else{
-				if(memcmp(mem, &redzone, sizeof(redzone)) != 0){
+				if(memcmp(mem, &redzone, 1) != 0){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
-					if(debug == 0 && check == 1){
+					if(check == 1){
 						/* A red-zone was indeed accessed. */
 						return 1;
 					}else if(debug == 0 && check == -1){
@@ -240,7 +254,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 			}
 		}else{
 			check = checkRegistration(mem, accessSize);
-			if(debug == 0 && check == 1){
+			if(check == 1){
 				/* A red-zone was indeed accessed. */
 				return 1;
 			}else if(debug == 0 && check == -1){
@@ -259,11 +273,13 @@ int checkMemoryAccess(void *mem, int accessSize){
 			void *accessMem;
 			accessMem = mem + (size_t) (accessSize - 1);
 
-			if((memcmp(mem, &redzone, sizeof(redzone)) != 0) && memcmp(accessMem, &redzone, sizeof(redzone)) != 0){
+			if((memcmp(mem, &redzone, 1) != 0) && memcmp(accessMem, &redzone, 1) != 0){
 				return 0;
 			}
+
+			return 1;
 		}else{
-			if(memcmp(mem, &redzone, sizeof(redzone)) != 0){
+			if(memcmp(mem, &redzone, 1) != 0){
 				return 0;
 			}
 
@@ -271,7 +287,10 @@ int checkMemoryAccess(void *mem, int accessSize){
 		}
 	}
 
-	printf("ERROR: SOMETHING WENT WRONG.\n");
+	if(debug == 0){
+		printf("ERROR: SOMETHING WENT WRONG WITH THE MEMORY CHECK.\n");
+	}
+
 	return -1;
 }
 
@@ -635,7 +654,7 @@ int insertRZPattern(void *mem, size_t size){
 /* This function assumes alignment is in order when freeing memory. */
 __attribute__((used))
 void Dlib_free(void *mem){
-	if(!mem){
+	if(mem == NULL){
 		return;
 	}
 
@@ -645,10 +664,13 @@ void Dlib_free(void *mem){
 	/* Remove the left and right red-zone entry from the red-zone hash table register. The right red-zone address is not
 	   explicitily recoverable. However, the left red-zone address suffices, since all blocks of red-zone entries 
 	   keep both the left and right starting addresses of its respective red-zones. */
-	if(removeAddr(mem, NULL) == 1){
-		printf("ERROR: FAILED TO REMOVE ADDRESS FROM HASH TABLE.\n");
-		free(mem);
-		return;
+	
+	if(useRegistration == 0){
+		if(removeAddr(mem, NULL) == 1){
+			printf("ERROR: FAILED TO REMOVE ADDRESS FROM HASH TABLE.\n");
+			free(mem);
+			return;
+		}
 	}
 
 	free(mem);
@@ -705,7 +727,7 @@ void *Dlib_malloc(size_t sz){
 
 __attribute__((used))
 void *Dlib_realloc(void *mem, size_t nsz){
-	if(mem == NULL && nsz <= 0){
+	if(debug == 0 && mem == NULL && nsz <= 0){
 		/* Naturally undefined behaviour, so solve by returning NULL for now. */
 		return NULL;
 	}
@@ -724,7 +746,7 @@ void *Dlib_realloc(void *mem, size_t nsz){
 		/* Move pointer back to original malloc() address. */
 		mem = mem - rz_sz;
 
-		if(mem == NULL){
+		if(debug == 0 && mem == NULL){
 			return NULL;
 		}
 
@@ -743,7 +765,7 @@ void *Dlib_realloc(void *mem, size_t nsz){
 		oldsz = malloc_usable_size(mem);
 		oldsz = oldsz - (2 * rz_sz);
 
-		if(oldsz <= 0){
+		if(debug == 0 && oldsz <= 0){
 			Dlib_free(newmem);
 			return NULL;
 		}

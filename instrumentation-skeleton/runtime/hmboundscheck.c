@@ -85,7 +85,7 @@ typedef struct freeList{
 //size_t global_offset = 0;
 
 //Essential global values for the management of the shadow memory.
-static void *shadowMemStart = NULL;
+void *shadowMemStart = NULL;
 
 //Originally used for the size of the shadow memory. A left-over from the ASAN implementation, but now used to calculate
 //the red-zone size dynamically. For scale value N, the red-zone size will be 2 ^ N (e.g., N = 3, 2 ^ 3 = 8 bytes).
@@ -220,6 +220,32 @@ int initLib(){
 		}
 	}
 
+	if(debug == 0){
+		if(fastCheckInit == 0){
+			printf("Fast Check: ACTIVATED\n");		
+		}else{
+			printf("Fast Check: DEACTIVATED\n");
+		}
+
+		if(ASANCheckInit == 0){
+			printf("Checking Type: ASAN\n");
+		}else{
+			printf("Checking Type: BIT SET/TEST\n");
+		}
+
+		if(useFreeLists == 0){
+			printf("Custom Memory Allocator: ACTIVATED\n");
+		}else{
+			printf("Custom Memory Allocator: DEACTIVATED\n");
+		}
+
+		if(useRegistration == 0){
+			printf("Memory Registration: ACTIVATED\n");
+		}else{
+			printf("Memory Registration: DEACTIVATED\n");
+		}
+	}
+
 	return 0;
 }
 /*------------------------------*/
@@ -345,7 +371,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
-					if(debug == 0 && check == 1){
+					if(check == 1){
 						/* A red-zone was indeed accessed. */
 						return 1;
 					}else if(debug == 0 && check == -1){
@@ -362,7 +388,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
-					if(debug == 0 && check == 1){
+					if(check == 1){
 						/* A red-zone was indeed accessed. */
 						return 1;
 					}else if(debug == 0 && check == -1){
@@ -380,7 +406,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 			if(check == 1){
 				/* A red-zone was indeed accessed. */
 				return 1;
-			}else if(check == -1){
+			}else if(debug == 0 && check == -1){
 				/* Something went wrong with the shadow memory. Probaby exit the program? */
 				printf("ERROR: SOMETHING WENT WRONG.\n");
 				return -1;
@@ -396,11 +422,13 @@ int checkMemoryAccess(void *mem, int accessSize){
 			void *accessMem;
 			accessMem = mem + (size_t) (accessSize - 1);
 
-			if((memcmp(mem, &redzone, sizeof(redzone)) != 0) && memcmp(accessMem, &redzone, sizeof(redzone)) != 0){
+			if((memcmp(mem, &redzone, 1) != 0) && (memcmp(accessMem, &redzone, 1) != 0)){
 				return 0;
 			}
+
+			return 1;
 		}else{
-			if(memcmp(mem, &redzone, sizeof(redzone)) != 0){
+			if(memcmp(mem, &redzone, 1) != 0){
 				return 0;
 			}
 
@@ -408,7 +436,10 @@ int checkMemoryAccess(void *mem, int accessSize){
 		}
 	}
 
-	printf("ERROR: SOMETHING WENT WRONG.\n");
+	if(debug == 0){
+		printf("ERROR: SOMETHING WENT WRONG WITH A MEMORY CHECK.\n");
+	}
+
 	return -1;
 }
 
@@ -842,7 +873,7 @@ int allocateFreeList(size_t sz){
 /* This function assumes alignment is in order when freeing memory. */
 __attribute__((used))
 void Dlib_free(void *mem){
-	if(debug == 0 && !mem){
+	if(mem == NULL){
 		return;
 	}
 
@@ -860,10 +891,12 @@ void Dlib_free(void *mem){
 
 		/* Remove the red-zones and object memory region from the shadow memory. The right red-zone in this case is
 	  	   not useful, but only exists for compatibility purposes. */
-		if(removeAddr(mem, NULL) == 1){
-			free(mem);
-			return;
-		}
+		if(useRegistration == 0){
+			if(removeAddr(mem, NULL) == 1){
+				free(mem);
+				return;
+				}
+		}		
 
 		free(mem);
 	}
@@ -963,7 +996,7 @@ void *Dlib_malloc(size_t sz){
 
 __attribute__((used))
 void *Dlib_realloc(void *mem, size_t nsz){
-	if(mem == NULL && nsz <= 0){
+	if(debug == 0 && mem == NULL && nsz <= 0){
 		/* Naturally undefined behaviour, so solve by returning NULL for now. */
 		return NULL;
 	}
@@ -1009,7 +1042,7 @@ void *Dlib_realloc(void *mem, size_t nsz){
 			oldsz = oldsz - (2 * rz_sz);
 		}
 
-		if(oldsz == 0){
+		if(debug == 0 && oldsz == 0){
 			Dlib_free(newmem);
 			return NULL;
 		}
@@ -1036,7 +1069,7 @@ void *Dlib_realloc(void *mem, size_t nsz){
 
 __attribute__((used))
 void *Dlib_calloc(size_t num, size_t sz){
-	if(sz <= 0){
+	if(debug == 0 && sz <= 0){
 		return NULL;
 	}
 
