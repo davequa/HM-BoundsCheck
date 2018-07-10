@@ -16,7 +16,7 @@ class LibcallCount(infra.Instance):
     def __init__(self, llvm_version):
         self.llvm = infra.packages.LLVM(version=llvm_version,
                                         compiler_rt=False,
-                                        patches=['gold-plugins', 'statsfilter'])
+                                        patches=['gold-plugins'])#, 'statsfilter'])
         self.passes = infra.packages.LLVMPasses(
                 self.llvm, os.path.join(curdir, 'llvm-passes'),
                 'skeleton', use_builtins=True)
@@ -227,23 +227,25 @@ if __name__ == '__main__':
     setup = infra.Setup(__file__)
 
     # TODO: more recent LLVM
-    instance = LibcallCount('3.8.0')
+ #   instance = LibcallCount('3.8.0')
+    instance = LibcallCount('4.0.0')
     setup.add_instance(infra.instances.Clang(instance.llvm, lto=True))
     setup.add_instance(instance)
 
-    newinstance = DHash('3.8.0')
+ #   newinstance = DHash('3.8.0')
+    newinstance = DHash('4.0.0')
  #   setup.add_instance(infra.instances.ClangLTO(newinstance.llvm))
     setup.add_instance(newinstance)
 
-    newnewinstance = HMBoundsCheck('3.8.0')
+ #   newnewinstance = HMBoundsCheck('3.8.0')
+    newnewinstance = HMBoundsCheck('4.0.0')
 #    setup.add_instance(infra.instances.ClangLTO(newnewinstance.llvm))
     setup.add_instance(newnewinstance)
 
     setup.add_target(HelloWorld())
-    setup.add_target(infra.targets.SPEC2006(
-# Mount, source_type = mounted, source = absolute path to mounted location
-        source='/media/bench/SPEC_CPU2006v1.2',
-        source_type='mounted',
-    ))
+  #  setup.add_target(infra.targets.SPEC2006(
+  #      source='/media/bench/SPEC_CPU2006v1.2',
+  #      source_type='tarfile',
+  #  ))
 
     setup.main()
