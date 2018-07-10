@@ -75,7 +75,7 @@ class DHash(infra.Instance):
     def __init__(self, llvm_version):
         self.llvm = infra.packages.LLVM(version=llvm_version,
                                         compiler_rt=False,
-                                        patches=['gold-plugins', 'statsfilter'])
+                                        patches=['gold-plugins'])#, 'statsfilter'])
         self.passes = infra.packages.LLVMPasses(
                 self.llvm, os.path.join(curdir, 'llvm-passes'),
                 'skeleton', use_builtins=True)
@@ -136,7 +136,7 @@ class HMBoundsCheck(infra.Instance):
     def __init__(self, llvm_version):
         self.llvm = infra.packages.LLVM(version=llvm_version,
                                         compiler_rt=False,
-                                        patches=['gold-plugins', 'statsfilter'])
+                                        patches=['gold-plugins'])#, 'statsfilter'])
         self.passes = infra.packages.LLVMPasses(
                 self.llvm, os.path.join(curdir, 'llvm-passes'),
                 'skeleton', use_builtins=True)
