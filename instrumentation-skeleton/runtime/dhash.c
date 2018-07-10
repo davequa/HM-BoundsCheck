@@ -98,7 +98,7 @@ static const int debug = 1;
 /*------------------------------*/
 
 /*----------------Initialisation Functions----------------*/
-size_t calcRZSize(size_t scale){
+static size_t calcRZSize(size_t scale){
 	/* The minimum size currently is 32 bytes, where scale N = 5, and the standard size is 128 bytes,
 	   with scale N = 7. */
 	if(debug == 0 && scale == 0){
@@ -111,7 +111,7 @@ size_t calcRZSize(size_t scale){
 	return rz_sz;
 }
 
-int unloadLib(){
+static int unloadLib(){
 	/* Function to destroy the mutexes, and to ensure the library cannot function properly any more. This is only necessary
 	   on dynamic library unloads (probably). */
 	return 0;
@@ -145,7 +145,7 @@ int initLib(){
 }
 
 
-int getRZAddrBucket(void *mem){
+static int getRZAddrBucket(void *mem){
 	/* Get most significant n bits from the address. */
 	unsigned long int pageNum;
 	pageNum = ((unsigned long int) mem >> hashexp);
@@ -156,7 +156,7 @@ int getRZAddrBucket(void *mem){
 	return bucket;
 }
 
-int checkRegistration(void *mem, int accessSize){
+static int checkRegistration(void *mem, int accessSize){
 	int rzBucket;
 	rzBucket = getRZAddrBucket(mem);
 
@@ -294,7 +294,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 	return -1;
 }
 
-rzAddr *removeAddrFromList(rzAddr *toRemove, int rzBucket){
+static rzAddr *removeAddrFromList(rzAddr *toRemove, int rzBucket){
 	int found;
 	found = -1;
 
@@ -351,7 +351,7 @@ rzAddr *removeAddrFromList(rzAddr *toRemove, int rzBucket){
 	}
 }
 
-int removeAddr(void *memL, void *memR){
+static int removeAddr(void *memL, void *memR){
 	rzAddr *current;
 	current = NULL;
 
@@ -487,7 +487,7 @@ int removeAddr(void *memL, void *memR){
 	return 0;
 }
 
-int addAddrToList(rzAddr *toAdd, int rzBucket){
+static int addAddrToList(rzAddr *toAdd, int rzBucket){
 	rzAddr *current;
 	current = NULL;
 
@@ -534,7 +534,7 @@ int addAddrToList(rzAddr *toAdd, int rzBucket){
 	return 0;
 }
 
-int registerAddr(void *memL, void *memR){
+static int registerAddr(void *memL, void *memR){
 	if(memL == NULL && memR == NULL){
 		return 1;
 	}
@@ -633,7 +633,7 @@ int registerAddr(void *memL, void *memR){
 	return 0;
 }
 
-int insertRZPattern(void *mem, size_t size){
+static int insertRZPattern(void *mem, size_t size){
 	/* Use a custom size for global, stack, or static objects (specified, customisable). If the size
 	   is either 0 (standard whenever not using a custom size) or not a multiple of 8, also use
 	   the standard size (red-zone size, defined by scale). */

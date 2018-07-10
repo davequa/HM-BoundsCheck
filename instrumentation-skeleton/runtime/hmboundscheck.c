@@ -161,7 +161,7 @@ static const int debug = 1;
 /*------------------------------*/
 
 /*----------------Initialisation Functions----------------*/
-int unmapShadowMemory(){
+static int unmapShadowMemory(){
 	/* Function is either unnecessary (because this happens automatically on process termination), or useful in
 	   the case of a premature termination because of memory failure/etc. */
 	if(debug == 0 && shadowMemStart == NULL){
@@ -177,7 +177,7 @@ int unmapShadowMemory(){
 	return 0;
 }
 
-int initShadowMemory(){
+static int initShadowMemory(){
 	/* Deactivate ASLR on MacOS to make this work. On other platforms, this should work. */
 	shadowMemStart = mmap((void*) LOC, SIZE, (PROT_READ | PROT_WRITE), (MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE | MAP_FIXED), -1, 0);
 	if(shadowMemStart == MAP_FAILED){
@@ -188,7 +188,7 @@ int initShadowMemory(){
 	return 0;
 }
 
-size_t calcRZSize(size_t scale){
+static size_t calcRZSize(size_t scale){
 	/* The minimum size currently is 32 bytes, where scale N = 5, and the standard size is 128 bytes,
 	   with scale N = 7. */
 	size_t rz_sz;
@@ -197,7 +197,7 @@ size_t calcRZSize(size_t scale){
 	return rz_sz;
 }
 
-int unloadLib(){
+static int unloadLib(){
 	/* Function to destroy the mutexes, and to ensure the library cannot function properly any more. This is only necessary
 	   on dynamic library unloads (probably). */
 	if(unmapShadowMemory() == 1){
@@ -251,7 +251,7 @@ int initLib(){
 /*------------------------------*/
 
 /*----------------General Functions----------------*/
-void *getShadowMemoryAddress(void *mem){
+static void *getShadowMemoryAddress(void *mem){
 	if(debug == 0 && mem == NULL){
 		return NULL;
 	}
@@ -267,7 +267,7 @@ void *getShadowMemoryAddress(void *mem){
 	return shadow;
 }
 
-int checkRegistration(void *mem, int accessSize){
+static int checkRegistration(void *mem, int accessSize){
 	void *shadowAddr;
 	shadowAddr = getShadowMemoryAddress(mem);
 
@@ -443,7 +443,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 	return -1;
 }
 
-int removeAddr(void *memL, void *memR){
+static int removeAddr(void *memL, void *memR){
 	/* Re-set the values of the shadow memory corresponding to the freed memory. */
 	void *shadowAddr;
 	shadowAddr = getShadowMemoryAddress(memL);
@@ -508,7 +508,7 @@ int removeAddr(void *memL, void *memR){
 	return 0;
 }
 
-int registerAddr(void *memL, void *memR){
+static int registerAddr(void *memL, void *memR){
 	/* Set the values of the shadow memory corresponding to the new allocation. */
 	void *shadowAddrL;
 	shadowAddrL = getShadowMemoryAddress(memL);
@@ -597,7 +597,7 @@ int registerAddr(void *memL, void *memR){
 	return 0;
 }
 
-int insertRZPattern(void *mem, size_t size){
+static int insertRZPattern(void *mem, size_t size){
 	/* Use a custom size for global, stack, or static objects (specified, customisable). If the size
 	   is either 0 (standard whenever not using a custom size) or not a multiple of 8, also use
 	   the standard size (red-zone size, defined by scale). */
@@ -621,7 +621,7 @@ int insertRZPattern(void *mem, size_t size){
 /*--------------------------------*/
 
 /*----------------Custom Allocator Functions----------------*/
-int getFreeListArrayIndex(size_t sz){
+static int getFreeListArrayIndex(size_t sz){
 	int index;
 	index = -1;
 
@@ -639,7 +639,7 @@ int getFreeListArrayIndex(size_t sz){
 	return index;
 }
 
-memSeg *createBlock(void *start, size_t originalsz){
+static memSeg *createBlock(void *start, size_t originalsz){
 	memSeg *new;
 	new = NULL;
 
@@ -658,7 +658,7 @@ memSeg *createBlock(void *start, size_t originalsz){
 	return new;
 }
 
-int returnBlockToFreeList(void *mem, int startAdd){
+static int returnBlockToFreeList(void *mem, int startAdd){
 	size_t allocation_sz;
 	allocation_sz = 0;
 
@@ -704,7 +704,7 @@ int returnBlockToFreeList(void *mem, int startAdd){
 	return 0;
 }
 
-void *getBlockFromFreeList(size_t sz){
+static void *getBlockFromFreeList(size_t sz){
 	int index;
 	index = getFreeListArrayIndex(sz);
 
@@ -759,7 +759,7 @@ void *getBlockFromFreeList(size_t sz){
 	return mem;
 }
 
-int checkFreeListArray(size_t sz){
+static int checkFreeListArray(size_t sz){
 	int index;
 	index = getFreeListArrayIndex(sz);
 
@@ -776,7 +776,7 @@ int checkFreeListArray(size_t sz){
 	return 0;
 }
 
-int setFreeList(void *blockStart, int index, size_t sz){
+static int setFreeList(void *blockStart, int index, size_t sz){
 	void *ptr;
 	ptr = blockStart + rz_sz;
 
@@ -823,7 +823,7 @@ int setFreeList(void *blockStart, int index, size_t sz){
 	return 0;
 }
 
-int allocateFreeList(size_t sz){
+static int allocateFreeList(size_t sz){
 	int index;
 	index = 0;
 
