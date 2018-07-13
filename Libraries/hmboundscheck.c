@@ -350,7 +350,7 @@ int checkRegistration(void *mem, int accessSize){
 					}else if(var == 64){
 						return 1;
 					}else{
-						if(((unsigned long long int) addedMem & 7) + accessSize > var){
+						if(((unsigned long long int) addedMem & 7) + 1 > var){
 							return 1;
 						}
 					}
