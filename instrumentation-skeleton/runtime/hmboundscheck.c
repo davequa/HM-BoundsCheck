@@ -313,7 +313,7 @@ static int checkRegistration(void *mem, int accessSize){
 					}else if(var == 64){
 						return 1;
 					}else{
-						if(((unsigned long long int) addedMem & 7) + accessSize > var){
+						if(((unsigned long long int) addedMem & 7) + 1 > var){
 							return 1;
 						}
 					}
@@ -367,7 +367,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 				void *accessMem;
 				accessMem = mem + (size_t) (accessSize - 1);
 
-				if((memcmp(mem, &redzone, sizeof(redzone)) != 0) && memcmp(accessMem, &redzone, sizeof(redzone)) != 0){
+				if((memcmp(mem, &redzone, 1) != 0) && memcmp(accessMem, &redzone, 1) != 0){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
@@ -384,7 +384,7 @@ int checkMemoryAccess(void *mem, int accessSize){
 					}
 				}
 			}else{
-				if(memcmp(mem, &redzone, sizeof(redzone)) != 0){
+				if(memcmp(mem, &redzone, 1) != 0){
 					return 0;
 				}else{
 					check = checkRegistration(mem, accessSize);
